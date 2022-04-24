@@ -1,47 +1,57 @@
-"""
-Нерезкое маскирование
-1) Сглаживаем исходное изображение
-2) Инвертируем
-3) Добавляем взвешенную версию к исходному (попиксельно)
-"""
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import cv2
+from skimage.restoration import unsupervised_wiener
+from scipy.signal import convolve2d as conv2
 
-path = r'/home/grigoriy/Data science/Tasks/Task3/WienerImageDeblurringExample_02.png'
-src = cv2.imread(path)
+path = r'/home/grigoriy/Data science/Tasks/Task3/img3.jpg'
+src = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
 
-def nothing(arg):
+class LenError(SystemError):
     pass
 
-cv2.namedWindow('pic')
-cv2.createTrackbar('Длина ядра', 'pic', 1, 50, nothing)
-cv2.createTrackbar('Ширина ядра', 'pic', 1, 50, nothing)
-cv2.createTrackbar('СКО по длине', 'pic', 1, 100, nothing)
-cv2.createTrackbar('СКО по ширине', 'pic', 1, 10000, nothing)
-cv2.createTrackbar('Вес', 'pic', 1, 10000, nothing)
-cv2.createTrackbar('Сдвиг', 'pic', 1, 100, nothing)
 
-while True:
+class Filters:
 
-    img = src.copy()
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    l = 2 * cv2.getTrackbarPos('Длина ядра', 'pic') + 1
-    w = 2 * cv2.getTrackbarPos('Ширина ядра', 'pic') + 1
-    sx = cv2.getTrackbarPos('СКО по длине', 'pic')
-    sy = cv2.getTrackbarPos('СКО по ширине', 'pic')
-    alpha = cv2.getTrackbarPos('Вес', 'pic') / 10000
-    gamma = cv2.getTrackbarPos('Сдвиг', 'pic')
+    def __init__(self, n, m):
+        Filters.__validate_len(self, n)
+        Filters.__validate_len(self, m)
+        self.n = n
+        self.m = m
 
-    blurred = cv2.GaussianBlur(img, (l, w), sx, sy)
-    inv_blurred = 255 - blurred
-    dst = cv2.addWeighted(img, 1 - alpha, inv_blurred, alpha, gamma) # f2(x, y) = (1-a) * f0(x, y) + a * f1(x, y)
+    def get_box_filter(self):
+        return np.ones(self.n, self.n) / (self.n * self.m)
 
-    cv2.imshow('pic', dst)
+    def get_gauss_kernel(self, sigma):
+        n, m = self.n // 2, self.m // 2
+        x, y = np.arange(-n, n + 1), np.arange(-m, m + 1)
+        x, y = np.meshgrid(x, y)
+        return 1 / (2 * np.pi * np.square(sigma)) * np.exp(
+            -0.5 * (np.square(x) + np.square(y)) / np.square(sigma)) * (1 / self.n * self.m)
 
-    if cv2.waitKey(1) == 27:
-        break
+    def __validate_len(self, x):
+        if x % 2 == 0:
+            raise ValueError
 
-cv2.destroyAllWindows()
-## ВЫВОД: Для слабого деблюра
+
+# Конвертируем ко float64 и сужаем диапазон
+f_xy = src.astype(np.float64) / 255
+
+# Ядро блюр-фильтра
+obj = Filters(23, 23)
+h_xy = obj.get_gauss_kernel(100)
+
+# Моделируем искажение
+g_xy = conv2(f_xy, h_xy)# Свертка
+
+# Деконволюция Винера-Ханта c автоматическим подбором параметров
+f_hat_xy, _ = unsupervised_wiener(g_xy, h_xy)
+
+
+plt.figure()
+plt.subplot(1, 2, 1)
+plt.imshow(g_xy[10:-11, 10:-11], 'gray')
+plt.subplot(1, 2, 2)
+plt.imshow(f_hat_xy[10:-11, 10:-11], 'gray')
+plt.show()
